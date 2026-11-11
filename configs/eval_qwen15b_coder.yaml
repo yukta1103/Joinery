@@ -1,0 +1,43 @@
+# Baseline evaluation of Qwen/Qwen2.5-Coder-1.5B-Instruct on Spider dev.
+# Paths are for local runs; the Kaggle notebook overrides data.spider_dir and output_dir.
+run_name: eval_qwen15b_coder
+seed: 0
+output_dir: results
+
+data:
+  spider_dir: data/spider_data
+  database_dir: null
+  split: dev
+  limit: null
+
+model:
+  name_or_path: Qwen/Qwen2.5-Coder-1.5B-Instruct
+  revision: null
+  dtype: float16
+  load_in_4bit: false
+
+generation:
+  batch_size: 16
+  max_new_tokens: 512
+
+prompt:
+  sample_rows: 3
+  max_value_chars: 50
+  warn_prompt_tokens: 4096
+
+execution:
+  timeout_s: 5.0
+  max_rows: 100000
+
+comparison:
+  float_digits: 6
+
+reward:
+  parse_reward: 0.1
+  execute_reward: 0.3
+  match_reward: 1.0
+
+wandb:
+  mode: disabled
+  project: joinery
+  entity: null
