@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "joinery"
+version = "0.1.0"
+description = "Text-to-SQL with a small LLM trained by GRPO on execution-based rewards"
+readme = "README.md"
+authors = [{ name = "Yukta" }]
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+    "sqlglot>=25.0",
+]
+
+[project.optional-dependencies]
+model = [
+    "torch>=2.1",
+    "transformers>=4.45",
+    "accelerate>=0.30",
+    "bitsandbytes>=0.43",
+]
+tracking = ["wandb>=0.17"]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
