@@ -14,15 +14,18 @@ from conftest import MINI_DEV
 from joinery.config import EvalConfig, build_dataclass
 from joinery.eval import CONFIG_FILE, METRICS_FILE, PREDICTIONS_FILE, read_records, rescore, run_eval
 from joinery.generation import Generation
+from joinery.metrics import format_headline
 from joinery.prompts import Message
 
-# Canned outputs keyed by question: correct, wrong result, schema error, no block, truncated.
+# Canned outputs keyed by question: correct, wrong result, schema error, no block, truncated,
+# (index 5 is the broken gold) and swapped columns (correct by default, wrong when strict).
 OUTPUTS = {
     MINI_DEV[0][0]: "Count rows.\n```sql\nSELECT count(*) FROM singer;\n```",
     MINI_DEV[1][0]: "Order by age.\n```sql\nSELECT name FROM singer ORDER BY age DESC\n```",
     MINI_DEV[2][0]: "```sql\nSELECT DISTINCT countries FROM singer\n```",
     MINI_DEV[3][0]: "SELECT venue FROM concert WHERE year = 2015",
     MINI_DEV[4][0]: "Average.\n```sql\nSELECT avg(net_worth) FROM singer",
+    MINI_DEV[6][0]: "Names and ages.\n```sql\nSELECT age, name FROM singer\n```",
 }
 TRUNCATED = {MINI_DEV[4][0]}
 
@@ -104,16 +107,28 @@ def test_full_run(spider_dir: Path, tmp_path: Path) -> None:
     excluded = records[MINI_DEV[5][0]]
     assert excluded["excluded"] and "no such table" in excluded["exclusion_reason"]
     assert excluded["output"] is None
+    swapped = records[MINI_DEV[6][0]]
+    assert swapped["correct"] and not swapped["correct_strict"]
+    assert swapped["error_type"] is None and swapped["reward"] == 1.0
+    assert records[MINI_DEV[0][0]]["correct_strict"]
 
     # The excluded example is never sent to the model.
     assert MINI_DEV[5][0] not in generator.generated
 
     assert metrics["complete"]
-    assert metrics["n_scored"] == 5 and metrics["n_excluded"] == 1 and metrics["n_correct"] == 2
-    assert metrics["execution_accuracy"] == pytest.approx(2 / 5)
-    assert metrics["execution_accuracy_incl_excluded"] == pytest.approx(2 / 6)
-    assert metrics["by_difficulty"]["easy"] == {"n": 5, "correct": 2, "accuracy": pytest.approx(0.4)}
-    assert metrics["error_types"] == {"correct": 2, "wrong_result": 1, "schema": 1, "no_block": 1}
+    assert metrics["n_scored"] == 6 and metrics["n_excluded"] == 1
+    assert metrics["n_correct"] == 3 and metrics["n_correct_strict"] == 2
+    assert metrics["execution_accuracy"] == pytest.approx(3 / 6)
+    assert metrics["execution_accuracy_strict"] == pytest.approx(2 / 6)
+    assert metrics["execution_accuracy_incl_excluded"] == pytest.approx(3 / 7)
+    assert metrics["by_difficulty"]["easy"] == {
+        "n": 6,
+        "correct": 3,
+        "accuracy": pytest.approx(0.5),
+        "correct_strict": 2,
+        "accuracy_strict": pytest.approx(2 / 6),
+    }
+    assert metrics["error_types"] == {"correct": 3, "wrong_result": 1, "schema": 1, "no_block": 1}
     assert metrics["n_truncated"] == 1
     assert json.loads((run_dir / METRICS_FILE).read_text()) == metrics
     assert yaml.safe_load((run_dir / CONFIG_FILE).read_text())["run_name"] == "fake_run"
@@ -129,7 +144,8 @@ def test_record_has_all_fields(spider_dir: Path, tmp_path: Path) -> None:
         "example_id", "db_id", "difficulty", "question", "gold_sql", "prompt", "prompt_tokens",
         "output", "output_tokens", "truncated", "extracted_sql", "extraction_status", "parses",
         "exec_error_type", "exec_error_message", "pred_row_count", "gold_row_count",
-        "gold_ordered", "correct", "error_type", "reward", "excluded", "exclusion_reason",
+        "gold_ordered", "correct", "correct_strict", "error_type", "reward", "excluded",
+        "exclusion_reason",
     }
     assert set(next(iter(keys))) == expected
 
@@ -146,7 +162,7 @@ def test_resume_after_crash(spider_dir: Path, tmp_path: Path) -> None:
 
     resumed = FakeGenerator()
     metrics = run_eval(cfg, lambda: resumed)
-    assert len(resumed.generated) == 3
+    assert len(resumed.generated) == len(OUTPUTS) - 2
     assert not set(resumed.generated) & set(crashing.generated)
     assert metrics == reference
 
@@ -220,3 +236,13 @@ def test_rescore_reproduces_metrics(spider_dir: Path, tmp_path: Path) -> None:
     assert read_records(tmp_path / "rescored" / PREDICTIONS_FILE) == read_records(
         cfg.run_dir() / PREDICTIONS_FILE
     )
+
+
+def test_headline_reports_both_metrics(spider_dir: Path, tmp_path: Path) -> None:
+    metrics = run_eval(make_config(spider_dir, tmp_path / "results"), FakeGenerator)
+    lines = format_headline(metrics).splitlines()
+    assert lines[0].split() == ["n", "exec", "acc", "strict"]
+    assert lines[1].split() == ["overall", "6", "50.0%", "33.3%"]
+    assert lines[2].split() == ["easy", "6", "50.0%", "33.3%"]
+    assert lines[3].split() == ["medium", "0", "n/a", "n/a"]
+    assert "1 example(s) excluded" in lines[-1]

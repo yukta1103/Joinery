@@ -27,7 +27,11 @@ class GoldExecutionError(RuntimeError):
 
 @dataclass(frozen=True)
 class Score:
-    """Everything learned while scoring one completion."""
+    """Everything learned while scoring one completion.
+
+    ``correct`` is the default metric (any column permutation may match) and drives the reward.
+    ``correct_strict`` additionally requires the gold column order and is reported separately.
+    """
 
     extraction: Extraction
     parses: bool
@@ -35,6 +39,7 @@ class Score:
     gold: ExecResult
     gold_ordered: bool
     correct: bool
+    correct_strict: bool
 
 
 def parses_as_query(sql: str) -> bool:
@@ -75,9 +80,13 @@ def score_completion(
     ordered = gold_is_ordered(gold_sql)
     extraction = extract_sql(completion)
     if extraction.sql is None:
-        return Score(extraction, False, None, gold, ordered, False)
+        return Score(extraction, False, None, gold, ordered, False, False)
     pred = execute_sql(extraction.sql, db_path, exec_config)
-    correct = pred.rows is not None and results_match(
-        pred.rows, gold.rows, ordered=ordered, float_digits=cmp_config.float_digits
+    correct = correct_strict = False
+    if pred.rows is not None:
+        rules = {"ordered": ordered, "float_digits": cmp_config.float_digits}
+        correct_strict = results_match(pred.rows, gold.rows, permute_columns=False, **rules)
+        correct = correct_strict or results_match(pred.rows, gold.rows, permute_columns=True, **rules)
+    return Score(
+        extraction, parses_as_query(extraction.sql), pred, gold, ordered, correct, correct_strict
     )
-    return Score(extraction, parses_as_query(extraction.sql), pred, gold, ordered, correct)

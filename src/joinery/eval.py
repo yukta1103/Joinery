@@ -55,6 +55,7 @@ _SCORE_KEYS = (
     "gold_row_count",
     "gold_ordered",
     "correct",
+    "correct_strict",
     "error_type",
     "reward",
 )
@@ -96,6 +97,7 @@ def score_fields(output: str, gold_sql: str, db_path: Path, config: EvalConfig) 
         "gold_row_count": len(score.gold.rows or ()),
         "gold_ordered": score.gold_ordered,
         "correct": score.correct,
+        "correct_strict": score.correct_strict,
         "error_type": error_type(score),
         "reward": tiered_reward(score, config.reward),
     }
@@ -195,6 +197,7 @@ def _log_wandb(config: EvalConfig, metrics: dict[str, Any]) -> None:
     )
     flat = {
         "execution_accuracy": metrics["execution_accuracy"],
+        "execution_accuracy_strict": metrics["execution_accuracy_strict"],
         "execution_accuracy_incl_excluded": metrics["execution_accuracy_incl_excluded"],
         "mean_reward": metrics["mean_reward"],
         "n_scored": metrics["n_scored"],
@@ -202,6 +205,7 @@ def _log_wandb(config: EvalConfig, metrics: dict[str, Any]) -> None:
     }
     for level, bucket in metrics["by_difficulty"].items():
         flat[f"accuracy/{level}"] = bucket["accuracy"]
+        flat[f"accuracy_strict/{level}"] = bucket["accuracy_strict"]
     run.summary.update(flat)
     run.finish()
 

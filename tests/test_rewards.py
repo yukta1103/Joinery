@@ -33,6 +33,7 @@ def reward(db_path: Path, exec_cfg: ExecutionConfig, cmp_cfg: ComparisonConfig, 
         (block("SELECT T1.name FROM singer T1 WHERE T1.country = 'USA' ORDER BY 1"), 1.0),
         (block("SELECT name FROM singer"), 0.3),
         (block("SELECT name, country FROM singer WHERE country = 'USA'"), 0.3),
+        (block("SELECT country, name FROM singer WHERE country = 'USA'"), 0.3),
         (block("SELECT name FROM singers WHERE country = 'USA'"), 0.1),
         (block("SELEC name FROM singer"), 0.0),
         (block("hello world"), 0.0),
@@ -79,10 +80,25 @@ def test_match_tier_iff_scored_correct(
         "SELECT name FROM singer WHERE country = 'UK'",
         "SELECT nme FROM singer",
         "SELECT DISTINCT name FROM singer WHERE country IN ('USA')",
+        "SELECT name, age FROM singer WHERE country = 'USA'",
     ]
-    for sql in candidates:
-        score = score_completion(block(sql), GOLD, db_path, exec_cfg, cmp_cfg)
-        assert (tiered_reward(score, reward_cfg) == reward_cfg.match_reward) == score.correct
+    golds = [GOLD, "SELECT age, name FROM singer WHERE country = 'USA'"]
+    for gold in golds:
+        for sql in candidates:
+            score = score_completion(block(sql), gold, db_path, exec_cfg, cmp_cfg)
+            assert (tiered_reward(score, reward_cfg) == reward_cfg.match_reward) == score.correct
+            assert score.correct or not score.correct_strict
+
+
+def test_swapped_columns_get_match_reward(
+    db_path: Path, exec_cfg: ExecutionConfig, cmp_cfg: ComparisonConfig, reward_cfg: RewardConfig
+) -> None:
+    gold = "SELECT name, age FROM singer ORDER BY age, name"
+    score = score_completion(block("SELECT age, name FROM singer ORDER BY age, name"), gold, db_path, exec_cfg, cmp_cfg)
+    assert score.correct and not score.correct_strict
+    assert tiered_reward(score, reward_cfg) == reward_cfg.match_reward
+    reordered = score_completion(block("SELECT age, name FROM singer ORDER BY name"), gold, db_path, exec_cfg, cmp_cfg)
+    assert not reordered.correct
 
 
 def test_score_fields(db_path: Path, exec_cfg: ExecutionConfig, cmp_cfg: ComparisonConfig) -> None:

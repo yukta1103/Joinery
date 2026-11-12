@@ -86,7 +86,7 @@ def easy_sql_dict() -> dict[str, Any]:
     }
 
 
-# (question, gold SQL) pairs for the mini Spider dev split. The last gold query is broken on
+# (question, gold SQL) pairs for the mini Spider dev split. Index 5's gold query is broken on
 # purpose so the runner's exclusion path is exercised.
 MINI_DEV = [
     ("How many singers are there?", "SELECT count(*) FROM singer"),
@@ -95,6 +95,7 @@ MINI_DEV = [
     ("What venues hosted concerts in 2015?", "SELECT venue FROM concert WHERE year = 2015"),
     ("What is the average net worth?", "SELECT avg(net_worth) FROM singer"),
     ("Broken gold example.", "SELECT * FROM no_such_table"),
+    ("List each singer's name and age.", "SELECT name, age FROM singer"),
 ]
 
 

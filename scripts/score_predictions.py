@@ -18,6 +18,7 @@ from pathlib import Path
 
 from joinery.config import load_eval_config
 from joinery.eval import rescore
+from joinery.metrics import format_headline
 
 
 def main() -> None:
@@ -32,6 +33,7 @@ def main() -> None:
     config = load_eval_config(args.config, args.overrides)
     metrics = rescore(args.predictions, config, args.out)
     print(json.dumps(metrics, indent=2))
+    print(format_headline(metrics))
 
 
 if __name__ == "__main__":

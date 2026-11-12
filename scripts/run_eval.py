@@ -14,6 +14,7 @@ import logging
 from joinery.config import load_eval_config
 from joinery.eval import run_eval
 from joinery.hf_generator import HFGenerator, set_seed
+from joinery.metrics import format_headline
 
 
 def main() -> None:
@@ -27,6 +28,7 @@ def main() -> None:
     set_seed(config.seed)
     metrics = run_eval(config, lambda: HFGenerator(config.model, config.generation))
     print(json.dumps(metrics, indent=2))
+    print(format_headline(metrics))
 
 
 if __name__ == "__main__":
