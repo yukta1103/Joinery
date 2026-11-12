@@ -20,12 +20,14 @@ No baseline has been run yet, so this README reports no results.
 ## Results
 
 None yet. This table gets numbers only from recorded runs (`results/<run>/metrics.json`).
+Execution accuracy uses the default column-permutation-invariant metric. The strict column-order
+accuracy appears beside it.
 
-| Model | Exec. accuracy (dev) | Easy | Medium | Hard | Extra |
-|---|---|---|---|---|---|
-| Qwen2.5-1.5B-Instruct | not run | | | | |
-| Qwen2.5-Coder-1.5B-Instruct | not run | | | | |
-| Qwen2.5-Coder-7B-Instruct (4-bit) | not run | | | | |
+| Model | Exec. accuracy (dev) | Strict | Easy | Medium | Hard | Extra |
+|---|---|---|---|---|---|---|
+| Qwen2.5-1.5B-Instruct | not run | | | | | |
+| Qwen2.5-Coder-1.5B-Instruct | not run | | | | | |
+| Qwen2.5-Coder-7B-Instruct (4-bit) | not run | | | | | |
 
 ## Repository layout
 
@@ -120,19 +122,22 @@ python scripts/score_predictions.py --config results/<run>/config.yaml \
     --predictions results/<run>/predictions.jsonl --out results/<run>/rescored
 ```
 
+Both `run_eval.py` and `score_predictions.py` finish with a table of the default and strict
+execution accuracy, overall and per difficulty.
+
 ### Outputs (`results/<run_name>/`)
 
 | File | Contents |
 |---|---|
 | `config.yaml` | Resolved config |
-| `generation_settings.json` | Model, commit hash, decoding settings, library versions, GPU |
+| `generation_settings.json` | Model, commit hash, model-default and effective decoding config, library versions, GPU |
 | `predictions.jsonl` | One record per example (fields below) |
-| `metrics.json` | Overall and per-difficulty accuracy, error-type counts, `complete` flag |
+| `metrics.json` | Overall and per-difficulty accuracy (default and strict), error-type counts, `complete` flag |
 
 Each record contains: `example_id, db_id, difficulty, question, gold_sql, prompt, prompt_tokens,
 output, output_tokens, truncated, extracted_sql, extraction_status, parses, exec_error_type,
-exec_error_message, pred_row_count, gold_row_count, gold_ordered, correct, error_type, reward,
-excluded, exclusion_reason`.
+exec_error_message, pred_row_count, gold_row_count, gold_ordered, correct, correct_strict,
+error_type, reward, excluded, exclusion_reason`.
 
 `error_type` names the first stage that failed: an extraction status (`no_block`,
 `empty_block`), an execution error (`syntax`, `schema`, `timeout`, `not_allowed`,
@@ -174,13 +179,16 @@ rejected. Invalid UTF-8 text in a database is decoded with replacement character
 | Case | Rule |
 |---|---|
 | Row order | Multiset (order-insensitive) unless the gold query has a **top-level** `ORDER BY`, then an ordered list. `ORDER BY` inside subqueries, `OVER (...)` or aggregate arguments doesn't count. |
-| Duplicate rows | Counted: `[(1,), (1,)]` does not match `[(1,)]`. Spider's original exec-match compares sets and ignores duplicates, so this rule is stricter. |
-| Column order | Matters: rows are compared as positional tuples. Column names are ignored. Spider's official script tolerates reordered columns, so this rule is stricter too. |
+| Duplicate rows | Counted: `[(1,), (1,)]` does not match `[(1,)]`. This applies after any column permutation and with either row-order rule. |
+| Column order (default metric) | Ignored: a prediction is correct if **some permutation of its columns** matches the gold result, as in test-suite-sql-eval. The row-order and duplicate rules apply after permuting. The permutation must be one mapping shared by every row: `[(1,'b'), (2,'a')]` does not match `[(1,'a'), (2,'b')]`, even though each column holds the right values. This is `correct` / `execution_accuracy`, and the reward uses it. |
+| Column order (strict metric) | Must match the gold order exactly. Reported alongside the default as `correct_strict` / `execution_accuracy_strict` (and per difficulty) in records, `metrics.json` and script output. A strict match is always also a default match. |
+| Column count | Must be equal under both metrics. An extra or missing column never matches, even when the shared columns agree. Column names are always ignored. |
+| Duplicate column values | Columns holding identical values are interchangeable, so `SELECT a, a, b` matches gold `SELECT b, a, a` whenever the values line up. |
 | NULL | `NULL` equals `NULL`. It does not equal `0` or `''`. |
 | Numbers | `1 == 1.0`. Floats are rounded to `float_digits` (default 6) decimals, so `0.1 + 0.2` matches `0.3`. Limitation: two values 1e-6 apart on either side of a rounding boundary (e.g. 2.5000006 vs 2.4999996) do not match. |
 | Text | Exact and case-sensitive. The text `'1'` does not equal the integer `1`. |
-| Empty gold result | Compared normally, but any wrong query that returns nothing also "matches". Metrics report accuracy separately for empty and non-empty gold results. |
-| Ties under `ORDER BY` | Compared as ordered lists, so a correct query that breaks ties differently is marked wrong. This is a known limitation shared with Spider's exec-match. |
+| Empty gold result | Two empty results match whatever their columns, so any wrong query that returns nothing also "matches". Metrics report accuracy separately for empty and non-empty gold results. |
+| Ties under `ORDER BY` | Compared as ordered lists, so a correct query that breaks ties differently is marked wrong. This is a known limitation, also present in test-suite-sql-eval. |
 | Failing gold queries | Excluded from scoring and listed with their error. Metrics report accuracy over scored examples and also counting excluded examples as wrong. |
 
 ### Difficulty levels
@@ -191,15 +199,18 @@ The logic is copied unchanged from the official evaluation script (see attributi
 ### Reward (draft for Phase 3)
 
 `joinery.rewards.execution_reward(completion, gold_sql, db_path, ...) -> float` is a pure function
-whose tiers come from the config: `match_reward` (1.0) if the rows match, `execute_reward` (0.3)
+whose tiers come from the config: `match_reward` (1.0) if the rows match under the default
+(column-permutation-invariant) metric, `execute_reward` (0.3)
 if the query runs but the rows differ, `parse_reward` (0.1) if SQL was extracted and parses
 (sqlglot) but fails to run, and 0 otherwise. It calls the same scoring code as the evaluation, so
 the top reward always means the evaluation counts the completion as correct.
 
 ### Reproducibility
 
-Decoding is greedy. Each run saves its resolved config and generation settings, including the
-model's commit hash. Pending examples are batched in a deterministic order (longest prompt first),
+Decoding is greedy with `repetition_penalty` set explicitly in every config (1.0, i.e. none). This
+overrides the model's shipped generation config: the Qwen2.5 Instruct models default to sampling
+with a penalty of 1.1. `generation_settings.json` records both the model's default config and the
+effective decoding config, along with the model's commit hash. Pending examples are batched in a deterministic order (longest prompt first),
 and a resumed run builds the same batches. Batched fp16 decoding can differ in the last bits from
 unbatched decoding, so results are reproducible for a given batch size and GPU type.
 
