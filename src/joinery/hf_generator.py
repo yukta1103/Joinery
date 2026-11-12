@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import platform
 from collections.abc import Sequence
 from typing import Any
@@ -22,11 +23,33 @@ def set_seed(seed: int) -> None:
     transformers.set_seed(seed)
 
 
+def decoding_config(
+    model_default: transformers.GenerationConfig, config: GenerationConfig, pad_token_id: int
+) -> transformers.GenerationConfig:
+    """The model's default generation config with this run's settings forced on top.
+
+    Sampling is turned off, and ``repetition_penalty`` comes from the run config. The Qwen2.5
+    Instruct models ship a default penalty of 1.1, which would otherwise apply silently. The
+    model's sampling parameters (temperature, top_p, top_k) stay in the config, but greedy
+    decoding ignores them.
+    """
+    effective = copy.deepcopy(model_default)
+    effective.update(
+        do_sample=False,
+        num_beams=1,
+        repetition_penalty=config.repetition_penalty,
+        max_new_tokens=config.max_new_tokens,
+        pad_token_id=pad_token_id,
+    )
+    return effective
+
+
 class HFGenerator:
     """Greedy, left-padded batched decoding with a causal LM.
 
-    Decoding uses the model's own generation config (for Qwen2.5 that includes its repetition
-    penalty) with sampling turned off. The effective settings are recorded by :meth:`describe`.
+    Decoding starts from the model's own generation config and overrides it with the run's
+    settings (see :func:`decoding_config`). Both the model default and the effective config are
+    recorded by :meth:`describe`.
     """
 
     def __init__(self, model_config: ModelConfig, generation_config: GenerationConfig) -> None:
@@ -54,7 +77,10 @@ class HFGenerator:
             device_map="auto",
         )
         self.model.eval()
-        eos = self.model.generation_config.eos_token_id
+        self._decoding = decoding_config(
+            self.model.generation_config, generation_config, self.tokenizer.pad_token_id
+        )
+        eos = self._decoding.eos_token_id
         self._eos_ids = set(eos if isinstance(eos, list) else [eos])
 
     def render_prompt(self, messages: list[Message]) -> str:
@@ -68,12 +94,7 @@ class HFGenerator:
         batch = self.tokenizer(
             list(prompts), return_tensors="pt", padding=True, add_special_tokens=False
         ).to(self.model.device)
-        output = self.model.generate(
-            **batch,
-            do_sample=False,
-            max_new_tokens=self._generation_config.max_new_tokens,
-            pad_token_id=self.tokenizer.pad_token_id,
-        )
+        output = self.model.generate(**batch, generation_config=self._decoding)
         new_tokens = output[:, batch["input_ids"].shape[1] :].tolist()
         results = []
         for ids in new_tokens:
@@ -90,10 +111,12 @@ class HFGenerator:
             "commit_hash": getattr(self.model.config, "_commit_hash", None),
             "dtype": self._model_config.dtype,
             "load_in_4bit": self._model_config.load_in_4bit,
-            "max_new_tokens": self._generation_config.max_new_tokens,
             "batch_size": self._generation_config.batch_size,
-            "do_sample": False,
-            "model_generation_config": self.model.generation_config.to_diff_dict(),
+            "do_sample": self._decoding.do_sample,
+            "repetition_penalty": self._decoding.repetition_penalty,
+            "max_new_tokens": self._decoding.max_new_tokens,
+            "model_default_generation_config": self.model.generation_config.to_diff_dict(),
+            "effective_generation_config": self._decoding.to_dict(),
             "torch": torch.__version__,
             "transformers": transformers.__version__,
             "python": platform.python_version(),

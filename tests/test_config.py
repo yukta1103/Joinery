@@ -14,6 +14,7 @@ def test_shipped_configs_load(path: Path) -> None:
     cfg = load_eval_config(path)
     assert cfg.run_name == path.stem
     assert cfg.model.dtype == "float16", "T4/P100 have no bf16"
+    assert cfg.generation.repetition_penalty == 1.0, "must override the model's default penalty"
 
 
 def test_overrides_are_typed(tmp_path: Path) -> None:

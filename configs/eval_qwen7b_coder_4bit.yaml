@@ -19,6 +19,7 @@ model:
 generation:
   batch_size: 8
   max_new_tokens: 512
+  repetition_penalty: 1.0  # overrides the model's shipped default (1.1 for Qwen2.5 Instruct)
 
 prompt:
   sample_rows: 3

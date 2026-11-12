@@ -61,14 +61,21 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class GenerationConfig:
-    """Batched greedy decoding settings for evaluation."""
+    """Batched greedy decoding settings for evaluation.
+
+    ``repetition_penalty`` always overrides the model's default (1.0 means no penalty), so
+    decoding does not silently depend on what each model ships in its generation config.
+    """
 
     batch_size: int
     max_new_tokens: int
+    repetition_penalty: float
 
     def __post_init__(self) -> None:
         if self.batch_size <= 0 or self.max_new_tokens <= 0:
             raise ValueError("generation.batch_size and generation.max_new_tokens must be positive")
+        if self.repetition_penalty <= 0:
+            raise ValueError("generation.repetition_penalty must be positive")
 
 
 @dataclass(frozen=True)

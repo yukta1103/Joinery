@@ -67,7 +67,7 @@ def make_config(spider_dir: Path, output_dir: Path, **overrides: Any) -> EvalCon
         "output_dir": str(output_dir),
         "data": {"spider_dir": str(spider_dir), "split": "dev"},
         "model": {"name_or_path": "fake"},
-        "generation": {"batch_size": 2, "max_new_tokens": 64},
+        "generation": {"batch_size": 2, "max_new_tokens": 64, "repetition_penalty": 1.0},
         "prompt": {"sample_rows": 2, "max_value_chars": 30, "warn_prompt_tokens": 50},
         "execution": {"timeout_s": 2.0, "max_rows": 1000},
         "comparison": {"float_digits": 6},
