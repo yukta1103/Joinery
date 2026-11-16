@@ -1,18 +1,36 @@
 from __future__ import annotations
 
+import itertools
+import time
 from pathlib import Path
 
 import pytest
 
-from joinery.comparison import gold_is_ordered, normalize_value, results_match
+from joinery.comparison import MatchOutcome, compare_results, gold_is_ordered, normalize_value
 from joinery.config import ExecutionConfig
 from joinery.execution import execute_sql
+
+
+BUDGET = 1_000_000
+
+
+def outcome(
+    pred: list[tuple],
+    gold: list[tuple],
+    ordered: bool = False,
+    digits: int = 6,
+    permute: bool = True,
+    budget: int = BUDGET,
+) -> MatchOutcome:
+    return compare_results(
+        pred, gold, ordered=ordered, float_digits=digits, permute_columns=permute, search_budget=budget
+    )
 
 
 def match(
     pred: list[tuple], gold: list[tuple], ordered: bool = False, digits: int = 6, permute: bool = True
 ) -> bool:
-    return results_match(pred, gold, ordered=ordered, float_digits=digits, permute_columns=permute)
+    return outcome(pred, gold, ordered, digits, permute) is MatchOutcome.MATCH
 
 
 def strict(pred: list[tuple], gold: list[tuple], ordered: bool = False) -> bool:
@@ -220,3 +238,72 @@ def test_end_to_end_avg_vs_manual(db_path: Path, exec_cfg: ExecutionConfig) -> N
     pred = execute_sql("SELECT sum(age) * 1.0 / count(*) FROM singer", db_path, exec_cfg)
     assert gold.rows is not None and pred.rows is not None
     assert match(list(pred.rows), list(gold.rows))
+
+
+def parity_tables(n: int) -> tuple[list[tuple], list[tuple]]:
+    """Adversarial input for the permutation search: all even- vs all odd-parity n-bit rows.
+
+    Every column holds the same multiset in both tables, and every projection onto fewer than n
+    columns is the full set of shorter bit tuples in both. No partial check can prune before the
+    last column, so the search must try every permutation, and none matches.
+    """
+    rows = list(itertools.product((0, 1), repeat=n))
+    gold = [r for r in rows if sum(r) % 2 == 0]
+    pred = [r for r in rows if sum(r) % 2 == 1]
+    return pred, gold
+
+
+def test_adversarial_search_proves_no_match_within_budget() -> None:
+    pred, gold = parity_tables(6)
+    assert outcome(pred, gold) is MatchOutcome.NO_MATCH
+
+
+@pytest.mark.parametrize("n", [8, 10, 12])
+def test_adversarial_search_hits_budget_quickly(n: int) -> None:
+    # Without the budget, n=8 took ~13 s and n=9 ~255 s on a laptop; the cap bounds every width.
+    pred, gold = parity_tables(n)
+    start = time.perf_counter()
+    assert outcome(pred, gold) is MatchOutcome.SEARCH_LIMIT
+    assert time.perf_counter() - start < 5.0
+
+
+def test_search_limit_is_deterministic() -> None:
+    pred, gold = parity_tables(8)
+    assert {outcome(pred, gold) for _ in range(3)} == {MatchOutcome.SEARCH_LIMIT}
+
+
+def test_tiny_budget_reports_limit_not_mismatch() -> None:
+    # A real match that needs the search: with too little budget it must say "limit", not "no".
+    pred = [("Joe", 1), ("Ann", 2)]
+    gold = [(1, "Joe"), (2, "Ann")]
+    assert outcome(pred, gold, budget=1) is MatchOutcome.SEARCH_LIMIT
+    assert outcome(pred, gold, budget=100) is MatchOutcome.MATCH
+
+
+def test_budget_not_spent_when_no_search_needed() -> None:
+    gold = [(1, "Joe"), (2, "Ann")]
+    assert outcome(list(gold), gold, budget=1) is MatchOutcome.MATCH
+    assert outcome([(1, "x")], gold, budget=1) is MatchOutcome.NO_MATCH  # row count differs
+    assert outcome([("x", 1), ("y", 2)], gold, budget=1) is MatchOutcome.NO_MATCH  # column values differ
+
+
+def test_strict_never_searches() -> None:
+    pred, gold = parity_tables(10)
+    assert outcome(pred, gold, permute=False, budget=1) is MatchOutcome.NO_MATCH
+
+
+def test_ordered_search_is_linear_even_when_wide() -> None:
+    # Ordered rows: equal column vectors decide everything, so no budget is consumed.
+    width = 200
+    gold = [tuple(r * width + c for c in range(width)) for r in range(20)]
+    pred = [row[::-1] for row in gold]
+    assert outcome(pred, gold, ordered=True, budget=1) is MatchOutcome.MATCH
+
+
+def test_wide_result_with_identical_columns_is_cheap() -> None:
+    # 200 identical columns over 1000 rows: the identical-vector rule tries one candidate per step.
+    gold = [tuple([i] * 200) for i in range(1000)]
+    pred = list(reversed(gold))
+    start = time.perf_counter()
+    assert outcome(pred, gold) is MatchOutcome.MATCH
+    assert time.perf_counter() - start < 5.0

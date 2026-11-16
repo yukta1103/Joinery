@@ -137,12 +137,13 @@ execution accuracy, overall and per difficulty.
 Each record contains: `example_id, db_id, difficulty, question, gold_sql, prompt, prompt_tokens,
 output, output_tokens, truncated, extracted_sql, extraction_status, parses, exec_error_type,
 exec_error_message, pred_row_count, gold_row_count, gold_ordered, correct, correct_strict,
-error_type, reward, excluded, exclusion_reason`.
+permutation_limit_hit, error_type, reward, excluded, exclusion_reason`.
 
 `error_type` names the first stage that failed: an extraction status (`no_block`,
 `empty_block`), an execution error (`syntax`, `schema`, `timeout`, `not_allowed`,
-`multiple_statements`, `too_many_rows`, `other`), or `wrong_result`. It is `null` when the
-prediction is correct.
+`multiple_statements`, `too_many_rows`, `other`), `permutation_limit` (the query ran but the
+column-permutation search hit its budget, so the result is undecided rather than proven wrong),
+or `wrong_result`. It is `null` when the prediction is correct.
 
 ## Evaluation design
 
@@ -184,6 +185,7 @@ rejected. Invalid UTF-8 text in a database is decoded with replacement character
 | Column order (strict metric) | Must match the gold order exactly. Reported alongside the default as `correct_strict` / `execution_accuracy_strict` (and per difficulty) in records, `metrics.json` and script output. A strict match is always also a default match. |
 | Column count | Must be equal under both metrics. An extra or missing column never matches, even when the shared columns agree. Column names are always ignored. |
 | Duplicate column values | Columns holding identical values are interchangeable, so `SELECT a, a, b` matches gold `SELECT b, a, a` whenever the values line up. |
+| Permutation search budget | The search prunes candidate columns by their values, tries interchangeable columns once, and (for unordered rows) checks partial rows column by column. With ordered rows it is O(width²) and needs no budget. With unordered rows there is no polynomial bound: in the worst case found so far, even- vs odd-parity bit tables (any cross join of boolean columns), nothing can be pruned before the last column. That took 13 s at 8 columns and 255 s at 9 before the cap. The search therefore spends a deterministic budget (`comparison.permutation_search_budget`, default 1,000,000 row operations, about 0.3 s worst case on a laptop). Running out gives `permutation_limit_hit: true` and `error_type: permutation_limit`. The example counts as not correct, earns at most `execute_reward`, and is counted in `n_permutation_limit`. The budget counts work rather than time, so the outcome is the same on every machine. |
 | NULL | `NULL` equals `NULL`. It does not equal `0` or `''`. |
 | Numbers | `1 == 1.0`. Floats are rounded to `float_digits` (default 6) decimals, so `0.1 + 0.2` matches `0.3`. Limitation: two values 1e-6 apart on either side of a rounding boundary (e.g. 2.5000006 vs 2.4999996) do not match. |
 | Text | Exact and case-sensitive. The text `'1'` does not equal the integer `1`. |

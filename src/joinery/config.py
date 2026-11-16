@@ -110,13 +110,21 @@ class ExecutionConfig:
 
 @dataclass(frozen=True)
 class ComparisonConfig:
-    """Result comparison settings. Floats are rounded to ``float_digits`` decimal places."""
+    """Result comparison settings.
+
+    Floats are rounded to ``float_digits`` decimal places. ``permutation_search_budget`` caps the
+    column-permutation search in row operations. Running out gives a labelled
+    ``permutation_limit`` outcome, never a match.
+    """
 
     float_digits: int = 6
+    permutation_search_budget: int = 1_000_000
 
     def __post_init__(self) -> None:
         if self.float_digits < 0:
             raise ValueError("comparison.float_digits must be non-negative")
+        if self.permutation_search_budget <= 0:
+            raise ValueError("comparison.permutation_search_budget must be positive")
 
 
 @dataclass(frozen=True)

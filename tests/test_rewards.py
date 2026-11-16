@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from joinery.config import ComparisonConfig, ExecutionConfig, RewardConfig
+from joinery.eval import error_type
 from joinery.execution import ExecErrorType
 from joinery.extraction import ExtractionStatus
 from joinery.rewards import execution_reward, tiered_reward
@@ -155,3 +156,37 @@ def test_reward_config_validation(parse: float, execute: float, match: float) ->
 )
 def test_parses_as_query(sql: str, expected: bool) -> None:
     assert parses_as_query(sql) is expected
+
+
+def _parity_sql(parity: int, n: int = 8) -> str:
+    cols = ", ".join(f"b{i}.x" for i in range(n))
+    tables = ", ".join(f"bits b{i}" for i in range(n))
+    total = " + ".join(f"b{i}.x" for i in range(n))
+    return f"WITH bits(x) AS (VALUES (0), (1)) SELECT {cols} FROM {tables} WHERE ({total}) % 2 = {parity}"
+
+
+def test_permutation_limit_from_real_sql_is_labelled_and_never_rewarded_as_match(
+    db_path: Path, exec_cfg: ExecutionConfig, reward_cfg: RewardConfig
+) -> None:
+    # A cross join of 8 boolean columns: even- vs odd-parity rows defeat every pruning rule.
+    cmp_cfg = ComparisonConfig(float_digits=6, permutation_search_budget=1_000_000)
+    score = score_completion(block(_parity_sql(1)), _parity_sql(0), db_path, exec_cfg, cmp_cfg)
+    assert score.pred is not None and score.pred.ok and len(score.pred.rows or ()) == 128
+    assert score.permutation_limit_hit
+    assert not score.correct and not score.correct_strict
+    assert tiered_reward(score, reward_cfg) == reward_cfg.execute_reward
+    assert error_type(score) == "permutation_limit"
+
+
+def test_budget_large_enough_proves_mismatch(
+    db_path: Path, exec_cfg: ExecutionConfig, reward_cfg: RewardConfig
+) -> None:
+    cmp_cfg = ComparisonConfig(float_digits=6, permutation_search_budget=10**9)
+    score = score_completion(block(_parity_sql(1, n=5)), _parity_sql(0, n=5), db_path, exec_cfg, cmp_cfg)
+    assert not score.permutation_limit_hit and not score.correct
+    assert error_type(score) == "wrong_result"
+
+
+def test_permutation_search_budget_validation() -> None:
+    with pytest.raises(ValueError):
+        ComparisonConfig(permutation_search_budget=0)

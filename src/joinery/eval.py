@@ -56,6 +56,7 @@ _SCORE_KEYS = (
     "gold_ordered",
     "correct",
     "correct_strict",
+    "permutation_limit_hit",
     "error_type",
     "reward",
 )
@@ -72,7 +73,8 @@ def error_type(score: Score) -> str | None:
     """One label per example: None if correct, else the first stage that went wrong.
 
     Labels are an extraction status (``no_block``, ``empty_block``), an execution error type
-    (``syntax``, ``schema``, ``timeout``, ...) or ``wrong_result``.
+    (``syntax``, ``schema``, ``timeout``, ...), ``permutation_limit`` (the column-permutation search
+    ran out of budget, so the result is undecided rather than proven wrong) or ``wrong_result``.
     """
     if score.correct:
         return None
@@ -80,6 +82,8 @@ def error_type(score: Score) -> str | None:
         return score.extraction.status.value
     if score.pred.error_type is not None:
         return score.pred.error_type.value
+    if score.permutation_limit_hit:
+        return "permutation_limit"
     return "wrong_result"
 
 
@@ -98,6 +102,7 @@ def score_fields(output: str, gold_sql: str, db_path: Path, config: EvalConfig) 
         "gold_ordered": score.gold_ordered,
         "correct": score.correct,
         "correct_strict": score.correct_strict,
+        "permutation_limit_hit": score.permutation_limit_hit,
         "error_type": error_type(score),
         "reward": tiered_reward(score, config.reward),
     }

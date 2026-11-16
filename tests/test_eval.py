@@ -144,7 +144,8 @@ def test_record_has_all_fields(spider_dir: Path, tmp_path: Path) -> None:
         "example_id", "db_id", "difficulty", "question", "gold_sql", "prompt", "prompt_tokens",
         "output", "output_tokens", "truncated", "extracted_sql", "extraction_status", "parses",
         "exec_error_type", "exec_error_message", "pred_row_count", "gold_row_count",
-        "gold_ordered", "correct", "correct_strict", "error_type", "reward", "excluded",
+        "gold_ordered", "correct", "correct_strict", "permutation_limit_hit", "error_type", "reward",
+        "excluded",
         "exclusion_reason",
     }
     assert set(next(iter(keys))) == expected

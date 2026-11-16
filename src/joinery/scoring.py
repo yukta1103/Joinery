@@ -15,7 +15,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
 
-from joinery.comparison import gold_is_ordered, results_match
+from joinery.comparison import MatchOutcome, compare_results, gold_is_ordered
 from joinery.config import ComparisonConfig, ExecutionConfig
 from joinery.execution import ExecResult, execute_sql
 from joinery.extraction import Extraction, extract_sql
@@ -31,6 +31,8 @@ class Score:
 
     ``correct`` is the default metric (any column permutation may match) and drives the reward.
     ``correct_strict`` additionally requires the gold column order and is reported separately.
+    ``permutation_limit_hit`` means the permutation search ran out of budget. ``correct`` is then
+    False because no match was found, not because a mismatch was proven.
     """
 
     extraction: Extraction
@@ -40,6 +42,7 @@ class Score:
     gold_ordered: bool
     correct: bool
     correct_strict: bool
+    permutation_limit_hit: bool
 
 
 def parses_as_query(sql: str) -> bool:
@@ -80,13 +83,28 @@ def score_completion(
     ordered = gold_is_ordered(gold_sql)
     extraction = extract_sql(completion)
     if extraction.sql is None:
-        return Score(extraction, False, None, gold, ordered, False, False)
+        return Score(extraction, False, None, gold, ordered, False, False, False)
     pred = execute_sql(extraction.sql, db_path, exec_config)
-    correct = correct_strict = False
+    strict = default = MatchOutcome.NO_MATCH
     if pred.rows is not None:
-        rules = {"ordered": ordered, "float_digits": cmp_config.float_digits}
-        correct_strict = results_match(pred.rows, gold.rows, permute_columns=False, **rules)
-        correct = correct_strict or results_match(pred.rows, gold.rows, permute_columns=True, **rules)
+        rules = {
+            "ordered": ordered,
+            "float_digits": cmp_config.float_digits,
+            "search_budget": cmp_config.permutation_search_budget,
+        }
+        strict = compare_results(pred.rows, gold.rows, permute_columns=False, **rules)
+        default = (
+            strict
+            if strict is MatchOutcome.MATCH
+            else compare_results(pred.rows, gold.rows, permute_columns=True, **rules)
+        )
     return Score(
-        extraction, parses_as_query(extraction.sql), pred, gold, ordered, correct, correct_strict
+        extraction=extraction,
+        parses=parses_as_query(extraction.sql),
+        pred=pred,
+        gold=gold,
+        gold_ordered=ordered,
+        correct=default is MatchOutcome.MATCH,
+        correct_strict=strict is MatchOutcome.MATCH,
+        permutation_limit_hit=default is MatchOutcome.SEARCH_LIMIT,
     )

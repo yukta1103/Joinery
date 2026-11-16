@@ -3,7 +3,8 @@
 Tiers, highest one reached wins:
 
 * ``match_reward``: the predicted rows match the gold rows (same decision as evaluation);
-* ``execute_reward``: the query runs without error but the rows differ;
+* ``execute_reward``: the query runs without error but the rows differ, or the column-permutation
+  search hit its budget (an unverified result never earns the match reward);
 * ``parse_reward``: SQL was extracted and parses as a query, but execution failed;
 * ``0``: no SQL could be extracted, or it does not parse and does not run.
 """

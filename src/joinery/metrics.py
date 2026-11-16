@@ -61,6 +61,7 @@ def summarize(records: Sequence[Record], warn_prompt_tokens: int) -> dict[str, A
         "gold_nonempty": _bucket([r for r in scored if r["gold_row_count"] != 0]),
         "error_types": dict(Counter(r["error_type"] or "correct" for r in scored).most_common()),
         "extraction_status": dict(Counter(r["extraction_status"] for r in scored).most_common()),
+        "n_permutation_limit": sum(bool(r["permutation_limit_hit"]) for r in scored),
         "n_truncated": sum(bool(r["truncated"]) for r in scored),
         "n_prompt_over_warn": sum(r["prompt_tokens"] > warn_prompt_tokens for r in scored),
         "mean_reward": sum(rewards) / len(rewards) if rewards else None,
@@ -85,6 +86,11 @@ def format_headline(metrics: Mapping[str, Any]) -> str:
         )
     if not metrics["complete"]:
         lines.append(f"INCOMPLETE: {metrics['n_records']}/{metrics['n_expected']} examples have records")
+    if metrics["n_permutation_limit"]:
+        lines.append(
+            f"{metrics['n_permutation_limit']} example(s) hit the permutation search budget "
+            "(counted as not correct, labelled permutation_limit)"
+        )
     if metrics["n_excluded"]:
         lines.append(f"{metrics['n_excluded']} example(s) excluded because their gold query failed")
     return "\n".join(lines)
