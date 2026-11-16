@@ -4,10 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from joinery.config import ComparisonConfig, ExecutionConfig, RewardConfig
-from joinery.eval import error_type
+from joinery.config import ComparisonConfig, EvalConfig, ExecutionConfig, RewardConfig, build_dataclass
+from joinery.eval import error_type, score_fields
 from joinery.execution import ExecErrorType
 from joinery.extraction import ExtractionStatus
+from joinery.metrics import format_headline, summarize
 from joinery.rewards import execution_reward, tiered_reward
 from joinery.scoring import GoldExecutionError, parses_as_query, score_completion
 
@@ -190,3 +191,61 @@ def test_budget_large_enough_proves_mismatch(
 def test_permutation_search_budget_validation() -> None:
     with pytest.raises(ValueError):
         ComparisonConfig(permutation_search_budget=0)
+
+
+# Gold has 4 rows. The prediction returns those same 4 rows plus one more, so if the result were
+# truncated to max_rows=4 it would wrongly look identical to gold.
+OVER_LIMIT_GOLD = "SELECT name FROM singer"
+OVER_LIMIT_PRED = "SELECT name FROM singer UNION ALL SELECT 'extra'"
+
+
+def test_pred_over_max_rows_is_discarded_never_matched(
+    db_path: Path, cmp_cfg: ComparisonConfig, reward_cfg: RewardConfig
+) -> None:
+    cfg = ExecutionConfig(timeout_s=2.0, max_rows=4)
+    score = score_completion(block(OVER_LIMIT_PRED), OVER_LIMIT_GOLD, db_path, cfg, cmp_cfg)
+    assert score.pred is not None and score.pred.error_type is ExecErrorType.TOO_MANY_ROWS
+    assert score.pred.rows is None, "over-limit results are discarded, not truncated"
+    assert not score.correct and not score.correct_strict and not score.permutation_limit_hit
+    assert error_type(score) == "too_many_rows"
+    assert tiered_reward(score, reward_cfg) == reward_cfg.parse_reward
+
+
+def test_result_exactly_at_max_rows_is_scored_normally(
+    db_path: Path, cmp_cfg: ComparisonConfig
+) -> None:
+    cfg = ExecutionConfig(timeout_s=2.0, max_rows=4)
+    score = score_completion(block("SELECT name FROM singer ORDER BY age"), OVER_LIMIT_GOLD, db_path, cfg, cmp_cfg)
+    assert score.pred is not None and score.pred.ok and len(score.pred.rows or ()) == 4
+    assert score.correct
+
+
+def test_pred_over_max_rows_counted_in_metrics(
+    db_path: Path, tmp_path: Path, cmp_cfg: ComparisonConfig, reward_cfg: RewardConfig
+) -> None:
+    cfg = build_dataclass(
+        EvalConfig,
+        {
+            "run_name": "r",
+            "seed": 0,
+            "output_dir": str(tmp_path),
+            "data": {"spider_dir": str(tmp_path)},
+            "model": {"name_or_path": "fake"},
+            "generation": {"batch_size": 1, "max_new_tokens": 8, "repetition_penalty": 1.0},
+            "prompt": {"sample_rows": 0, "max_value_chars": 10, "warn_prompt_tokens": 100},
+            "execution": {"timeout_s": 2.0, "max_rows": 4},
+            "comparison": {"float_digits": 6},
+            "reward": {"parse_reward": 0.1, "execute_reward": 0.3, "match_reward": 1.0},
+        },
+    )
+    common = {"excluded": False, "difficulty": "easy", "truncated": False, "prompt_tokens": 1}
+    records = [
+        {**common, **score_fields(block(sql), OVER_LIMIT_GOLD, db_path, cfg)}
+        for sql in (OVER_LIMIT_PRED, OVER_LIMIT_GOLD, "SELECT name FROM singer, concert")
+    ]
+    metrics = summarize(records, warn_prompt_tokens=100)
+    assert metrics["n_pred_too_many_rows"] == 2
+    assert metrics["n_correct"] == 1
+    assert metrics["error_types"] == {"too_many_rows": 2, "correct": 1}
+    headline = format_headline({**metrics, "complete": True, "n_expected": 3})
+    assert "2 prediction(s) exceeded execution.max_rows" in headline

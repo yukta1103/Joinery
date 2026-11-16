@@ -247,3 +247,16 @@ def test_headline_reports_both_metrics(spider_dir: Path, tmp_path: Path) -> None
     assert lines[2].split() == ["easy", "6", "50.0%", "33.3%"]
     assert lines[3].split() == ["medium", "0", "n/a", "n/a"]
     assert "1 example(s) excluded" in lines[-1]
+
+
+def test_gold_over_max_rows_is_excluded_not_scored(spider_dir: Path, tmp_path: Path) -> None:
+    cfg = make_config(spider_dir, tmp_path / "results", execution={"timeout_s": 2.0, "max_rows": 3})
+    generator = FakeGenerator()
+    metrics = run_eval(cfg, lambda: generator)
+    records = by_question(read_records(cfg.run_dir() / PREDICTIONS_FILE))
+    for index in (1, 6):  # golds returning 4 rows
+        record = records[MINI_DEV[index][0]]
+        assert record["excluded"] and record["correct"] is None
+        assert record["exclusion_reason"].startswith("gold too_many_rows")
+        assert MINI_DEV[index][0] not in generator.generated
+    assert metrics["n_excluded"] == 3  # the two over-limit golds plus the broken one

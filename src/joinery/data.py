@@ -16,7 +16,7 @@ from typing import Any
 
 from joinery.comparison import gold_is_ordered
 from joinery.config import DataConfig, ExecutionConfig
-from joinery.execution import execute_sql
+from joinery.execution import ExecErrorType, execute_sql
 from joinery.spider_hardness import DIFFICULTY_LEVELS, eval_hardness
 
 SPLIT_FILES: dict[str, tuple[str, ...]] = {
@@ -96,12 +96,16 @@ def audit_gold(
     """Execute every gold query and summarize the results.
 
     Returns a JSON-serializable report: counts by difficulty, gold queries that fail (and why),
-    how many return no rows and how many are order-sensitive.
+    how many return no rows and how many are order-sensitive. ``n_gold_too_many_rows`` counts gold
+    queries over ``config.max_rows``. Evaluation would silently exclude those, so it must be 0
+    before a run (``scripts/check_data.py`` exits non-zero otherwise). ``max_gold_rows`` is the
+    largest gold result that fit, for choosing the limit.
     """
     examples = list(examples)
     failures = []
     empty = 0
     ordered = 0
+    max_rows_seen = 0
     for ex in examples:
         result = execute_sql(ex.gold_sql, database_path(database_dir, ex.db_id), config)
         if not result.ok:
@@ -116,12 +120,16 @@ def audit_gold(
             continue
         empty += not result.rows
         ordered += gold_is_ordered(ex.gold_sql)
+        max_rows_seen = max(max_rows_seen, len(result.rows or ()))
     by_difficulty = Counter(ex.difficulty for ex in examples)
     return {
         "n_examples": len(examples),
         "n_databases": len({ex.db_id for ex in examples}),
         "by_difficulty": {level: by_difficulty.get(level, 0) for level in DIFFICULTY_LEVELS},
         "n_gold_failed": len(failures),
+        "n_gold_too_many_rows": sum(f["error_type"] == ExecErrorType.TOO_MANY_ROWS.value for f in failures),
+        "max_rows_limit": config.max_rows,
+        "max_gold_rows": max_rows_seen,
         "n_gold_empty": empty,
         "n_gold_ordered": ordered,
         "gold_failures": failures,

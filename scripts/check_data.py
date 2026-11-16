@@ -1,5 +1,7 @@
 """Check the Spider setup and audit every gold query of a split (no GPU needed).
 
+Exits non-zero if any gold query returns more than execution.max_rows rows.
+
 Example:
     python scripts/check_data.py --config configs/eval_qwen15b_instruct.yaml
     python scripts/check_data.py --config configs/eval_qwen15b_instruct.yaml --set data.split=train
@@ -37,6 +39,12 @@ def main() -> None:
     for failure in report["gold_failures"]:
         print(f"gold failure {failure['example_id']} ({failure['db_id']}): {failure['error_message']}")
     print(f"Full report written to {out_path}")
+    if report["n_gold_too_many_rows"]:
+        raise SystemExit(
+            f"Gold queries returning more than execution.max_rows={report['max_rows_limit']} rows: "
+            f"{report['n_gold_too_many_rows']}. They would be excluded from evaluation; raise "
+            "execution.max_rows."
+        )
 
 
 if __name__ == "__main__":

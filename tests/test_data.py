@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -7,6 +9,8 @@ from conftest import MINI_DEV
 
 from joinery.config import DataConfig, ExecutionConfig
 from joinery.data import audit_gold, database_path, load_examples, require_databases
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_load_dev(spider_dir: Path) -> None:
@@ -63,3 +67,50 @@ def test_audit_gold(spider_dir: Path) -> None:
 def test_data_config_validation(bad: dict) -> None:
     with pytest.raises(ValueError):
         DataConfig(spider_dir="x", **bad)
+
+
+def test_audit_counts_gold_over_max_rows(spider_dir: Path) -> None:
+    # MINI_DEV golds return 1, 4, 3, 2, 1, (broken), 4 rows. With max_rows=3 two golds overflow.
+    examples = load_examples(DataConfig(spider_dir=str(spider_dir)))
+    report = audit_gold(examples, spider_dir / "database", ExecutionConfig(timeout_s=2.0, max_rows=3))
+    assert report["n_gold_too_many_rows"] == 2
+    assert report["max_rows_limit"] == 3
+    assert report["max_gold_rows"] == 3
+    over = {f["example_id"] for f in report["gold_failures"] if f["error_type"] == "too_many_rows"}
+    assert over == {"dev_00001", "dev_00006"}
+
+
+def test_audit_reports_largest_gold_under_default_limit(spider_dir: Path) -> None:
+    examples = load_examples(DataConfig(spider_dir=str(spider_dir)))
+    report = audit_gold(examples, spider_dir / "database", ExecutionConfig())
+    assert report["n_gold_too_many_rows"] == 0
+    assert report["max_gold_rows"] == 4
+
+
+def _run_check_data(spider_dir: Path, tmp_path: Path, max_rows: int) -> subprocess.CompletedProcess:
+    config = REPO_ROOT / "configs" / "eval_qwen15b_instruct.yaml"
+    return subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "check_data.py"),
+            "--config", str(config),
+            "--set", f"data.spider_dir={spider_dir}",
+            "--set", f"output_dir={tmp_path / 'results'}",
+            "--set", f"execution.max_rows={max_rows}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def test_check_data_fails_when_gold_exceeds_max_rows(spider_dir: Path, tmp_path: Path) -> None:
+    result = _run_check_data(spider_dir, tmp_path, max_rows=3)
+    assert result.returncode != 0
+    assert "Gold queries returning more than execution.max_rows=3 rows: 2" in result.stderr
+
+
+def test_check_data_passes_when_gold_fits(spider_dir: Path, tmp_path: Path) -> None:
+    result = _run_check_data(spider_dir, tmp_path, max_rows=100_000)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "results" / "data_check_dev.json").is_file()

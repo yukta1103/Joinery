@@ -86,9 +86,10 @@ reliably from code, so this step is manual.
    ```bash
    python scripts/check_data.py --config configs/eval_qwen15b_instruct.yaml
    ```
-   This prints the number of examples per difficulty, any gold queries that fail, and how many
-   return no rows or depend on row order, and saves the report to
-   `results/data_check_dev.json`.
+   This prints the number of examples per difficulty, any gold queries that fail, how many
+   return no rows or depend on row order, and the largest gold result (`max_gold_rows`). It saves
+   the report to `results/data_check_dev.json` and exits non-zero if any gold query exceeds
+   `execution.max_rows`.
 
 **Kaggle:** upload `spider_data.zip` once as a private Kaggle dataset (Kaggle extracts it) and
 attach it to the notebook. Its path looks like `/kaggle/input/<dataset-slug>/spider_data`.
@@ -173,7 +174,8 @@ Every query gets a fresh connection opened `mode=ro&immutable=1` with `PRAGMA qu
 authorizer that allows only reads, SELECT, functions and recursive CTEs. Writes, DDL, `ATTACH`,
 `PRAGMA`, transactions and `VACUUM` are rejected before they run. A progress handler enforces a
 wall-clock timeout (default 5 s), and results with more than `max_rows` rows (default 100,000) are
-rejected. Invalid UTF-8 text in a database is decoded with replacement characters.
+rejected. Such a result is discarded, never truncated, so it can never match gold by
+coincidence. Invalid UTF-8 text in a database is decoded with replacement characters.
 
 ### Comparison rules
 
@@ -191,6 +193,7 @@ rejected. Invalid UTF-8 text in a database is decoded with replacement character
 | Text | Exact and case-sensitive. The text `'1'` does not equal the integer `1`. |
 | Empty gold result | Two empty results match whatever their columns, so any wrong query that returns nothing also "matches". Metrics report accuracy separately for empty and non-empty gold results. |
 | Ties under `ORDER BY` | Compared as ordered lists, so a correct query that breaks ties differently is marked wrong. This is a known limitation, also present in test-suite-sql-eval. |
+| Results over `execution.max_rows` | A prediction over the limit has its rows discarded, never truncated (a truncated result could match gold by accident). It is labelled `too_many_rows`, counts as not correct, earns at most `parse_reward`, and is counted in `n_pred_too_many_rows`. A result of exactly `max_rows` rows is scored normally. A gold query over the limit would be excluded, so `check_data.py` reports `n_gold_too_many_rows` and `max_gold_rows` and exits non-zero unless the count is 0. |
 | Failing gold queries | Excluded from scoring and listed with their error. Metrics report accuracy over scored examples and also counting excluded examples as wrong. |
 
 ### Difficulty levels
