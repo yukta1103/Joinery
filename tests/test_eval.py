@@ -99,6 +99,7 @@ def test_full_run(spider_dir: Path, tmp_path: Path) -> None:
     wrong_order = records[MINI_DEV[1][0]]
     assert wrong_order["gold_ordered"] and wrong_order["error_type"] == "wrong_result"
     assert wrong_order["reward"] == 0.3
+    assert wrong_order["ordered_mismatch_multiset_match"], "right rows, wrong order"
     assert records[MINI_DEV[2][0]]["error_type"] == "schema"
     assert records[MINI_DEV[3][0]]["error_type"] == "no_block"
     truncated = records[MINI_DEV[4][0]]
@@ -130,6 +131,7 @@ def test_full_run(spider_dir: Path, tmp_path: Path) -> None:
     }
     assert metrics["error_types"] == {"correct": 3, "wrong_result": 1, "schema": 1, "no_block": 1}
     assert metrics["n_truncated"] == 1
+    assert metrics["n_order_only_mismatch"] == 1
     assert json.loads((run_dir / METRICS_FILE).read_text()) == metrics
     assert yaml.safe_load((run_dir / CONFIG_FILE).read_text())["run_name"] == "fake_run"
 
@@ -144,7 +146,8 @@ def test_record_has_all_fields(spider_dir: Path, tmp_path: Path) -> None:
         "example_id", "db_id", "difficulty", "question", "gold_sql", "prompt", "prompt_tokens",
         "output", "output_tokens", "truncated", "extracted_sql", "extraction_status", "parses",
         "exec_error_type", "exec_error_message", "pred_row_count", "gold_row_count",
-        "gold_ordered", "correct", "correct_strict", "permutation_limit_hit", "error_type", "reward",
+        "gold_ordered", "correct", "correct_strict", "permutation_limit_hit",
+        "ordered_mismatch_multiset_match", "error_type", "reward",
         "excluded",
         "exclusion_reason",
     }
@@ -246,6 +249,7 @@ def test_headline_reports_both_metrics(spider_dir: Path, tmp_path: Path) -> None
     assert lines[1].split() == ["overall", "6", "50.0%", "33.3%"]
     assert lines[2].split() == ["easy", "6", "50.0%", "33.3%"]
     assert lines[3].split() == ["medium", "0", "n/a", "n/a"]
+    assert any(line.startswith("order-only mismatches") and line.endswith(": 1") for line in lines)
     assert "1 example(s) excluded" in lines[-1]
 
 

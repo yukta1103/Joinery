@@ -33,6 +33,10 @@ class Score:
     ``correct_strict`` additionally requires the gold column order and is reported separately.
     ``permutation_limit_hit`` means the permutation search ran out of budget. ``correct`` is then
     False because no match was found, not because a mismatch was proven.
+    ``ordered_mismatch_multiset_match`` is a diagnostic only. It is True when the gold query has a
+    top-level ORDER BY, the ordered comparison failed, and the rows still match as a multiset
+    (default column handling). Typical causes are a wrong or missing sort, or a correct sort
+    whose ties come out in a different order. It never affects ``correct`` or the reward.
     """
 
     extraction: Extraction
@@ -43,6 +47,7 @@ class Score:
     correct: bool
     correct_strict: bool
     permutation_limit_hit: bool
+    ordered_mismatch_multiset_match: bool
 
 
 def parses_as_query(sql: str) -> bool:
@@ -83,9 +88,10 @@ def score_completion(
     ordered = gold_is_ordered(gold_sql)
     extraction = extract_sql(completion)
     if extraction.sql is None:
-        return Score(extraction, False, None, gold, ordered, False, False, False)
+        return Score(extraction, False, None, gold, ordered, False, False, False, False)
     pred = execute_sql(extraction.sql, db_path, exec_config)
     strict = default = MatchOutcome.NO_MATCH
+    order_only_mismatch = False
     if pred.rows is not None:
         rules = {
             "ordered": ordered,
@@ -98,6 +104,10 @@ def score_completion(
             if strict is MatchOutcome.MATCH
             else compare_results(pred.rows, gold.rows, permute_columns=True, **rules)
         )
+        if ordered and default is not MatchOutcome.MATCH:
+            unordered = {**rules, "ordered": False}
+            multiset = compare_results(pred.rows, gold.rows, permute_columns=True, **unordered)
+            order_only_mismatch = multiset is MatchOutcome.MATCH
     return Score(
         extraction=extraction,
         parses=parses_as_query(extraction.sql),
@@ -107,4 +117,5 @@ def score_completion(
         correct=default is MatchOutcome.MATCH,
         correct_strict=strict is MatchOutcome.MATCH,
         permutation_limit_hit=default is MatchOutcome.SEARCH_LIMIT,
+        ordered_mismatch_multiset_match=order_only_mismatch,
     )

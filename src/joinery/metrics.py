@@ -62,6 +62,7 @@ def summarize(records: Sequence[Record], warn_prompt_tokens: int) -> dict[str, A
         "error_types": dict(Counter(r["error_type"] or "correct" for r in scored).most_common()),
         "extraction_status": dict(Counter(r["extraction_status"] for r in scored).most_common()),
         "n_permutation_limit": sum(bool(r["permutation_limit_hit"]) for r in scored),
+        "n_order_only_mismatch": sum(bool(r["ordered_mismatch_multiset_match"]) for r in scored),
         "n_pred_too_many_rows": sum(r["exec_error_type"] == "too_many_rows" for r in scored),
         "n_truncated": sum(bool(r["truncated"]) for r in scored),
         "n_prompt_over_warn": sum(r["prompt_tokens"] > warn_prompt_tokens for r in scored),
@@ -85,6 +86,10 @@ def format_headline(metrics: Mapping[str, Any]) -> str:
             f"{level:<10}{bucket['n']:>6}{_percent(bucket['accuracy']):>11}"
             f"{_percent(bucket['accuracy_strict']):>9}"
         )
+    lines.append(
+        f"order-only mismatches (ORDER BY gold, right rows in wrong order; diagnostic, still "
+        f"counted wrong): {metrics['n_order_only_mismatch']}"
+    )
     if not metrics["complete"]:
         lines.append(f"INCOMPLETE: {metrics['n_records']}/{metrics['n_expected']} examples have records")
     if metrics["n_permutation_limit"]:

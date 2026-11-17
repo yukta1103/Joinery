@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
 
+from joinery.comparison import MatchOutcome, compare_results
 from joinery.config import ComparisonConfig, EvalConfig, ExecutionConfig, RewardConfig, build_dataclass
 from joinery.eval import error_type, score_fields
 from joinery.execution import ExecErrorType
@@ -249,3 +251,112 @@ def test_pred_over_max_rows_counted_in_metrics(
     assert metrics["error_types"] == {"too_many_rows": 2, "correct": 1}
     headline = format_headline({**metrics, "complete": True, "n_expected": 3})
     assert "2 prediction(s) exceeded execution.max_rows" in headline
+
+
+# Fixture ages: Joe 30, Ann 25, Bo 30, Cy 41, so Joe and Bo tie on the sort key.
+TIED_GOLD = "SELECT name FROM singer ORDER BY age"
+
+
+def _score(sql: str, gold: str, db_path: Path, exec_cfg: ExecutionConfig, cmp_cfg: ComparisonConfig):
+    return score_completion(block(sql), gold, db_path, exec_cfg, cmp_cfg)
+
+
+def test_tied_sort_keys_in_different_order_flag_diagnostic_only(
+    db_path: Path, exec_cfg: ExecutionConfig, cmp_cfg: ComparisonConfig, reward_cfg: RewardConfig
+) -> None:
+    gold_rows = _score(TIED_GOLD, TIED_GOLD, db_path, exec_cfg, cmp_cfg).gold.rows
+    assert gold_rows == (("Ann",), ("Joe",), ("Bo",), ("Cy",)), "precondition: SQLite tie order"
+    # Same sort key, ties broken by name instead: a semantically correct answer, different order.
+    score = _score("SELECT name FROM singer ORDER BY age, name", TIED_GOLD, db_path, exec_cfg, cmp_cfg)
+    assert score.pred is not None and score.pred.rows == (("Ann",), ("Bo",), ("Joe",), ("Cy",))
+    assert score.ordered_mismatch_multiset_match
+    assert not score.correct and not score.correct_strict
+    assert error_type(score) == "wrong_result"
+    assert tiered_reward(score, reward_cfg) == reward_cfg.execute_reward
+
+
+@pytest.mark.parametrize(
+    ("sql", "gold", "expected"),
+    [
+        ("SELECT name FROM singer ORDER BY age DESC", TIED_GOLD, True),  # reversed sort
+        ("SELECT name FROM singer", TIED_GOLD, True),  # sort missing (storage order differs)
+        ("SELECT name FROM singer ORDER BY age", TIED_GOLD, False),  # correct: no diagnostic
+        ("SELECT name FROM singer WHERE age > 26 ORDER BY age", TIED_GOLD, False),  # wrong rows
+        ("SELECT country FROM singer ORDER BY age", TIED_GOLD, False),  # wrong column
+        ("SELECT age, name FROM singer ORDER BY age DESC", "SELECT name, age FROM singer ORDER BY age", True),
+        ("SELECT name FROM singer ORDER BY age DESC", "SELECT name FROM singer", False),  # gold unordered
+        ("SELECT nme FROM singer", TIED_GOLD, False),  # execution error
+        ("no sql here", TIED_GOLD, False),  # nothing extracted
+    ],
+)
+def test_order_only_mismatch_cases(
+    db_path: Path, exec_cfg: ExecutionConfig, cmp_cfg: ComparisonConfig, sql: str, gold: str, expected: bool
+) -> None:
+    completion = sql if sql == "no sql here" else block(sql)
+    score = score_completion(completion, gold, db_path, exec_cfg, cmp_cfg)
+    assert score.ordered_mismatch_multiset_match is expected
+    if expected:
+        assert not score.correct
+
+
+def test_diagnostic_never_changes_correctness_or_reward(
+    db_path: Path, exec_cfg: ExecutionConfig, cmp_cfg: ComparisonConfig, reward_cfg: RewardConfig
+) -> None:
+    candidates = [
+        "SELECT name FROM singer ORDER BY age",
+        "SELECT name FROM singer ORDER BY age, name",
+        "SELECT name FROM singer ORDER BY age DESC",
+        "SELECT name FROM singer",
+        "SELECT name FROM singer WHERE age > 26",
+        "SELECT nme FROM singer",
+    ]
+    for sql in candidates:
+        score = _score(sql, TIED_GOLD, db_path, exec_cfg, cmp_cfg)
+        # Correctness is exactly the ordered comparison on its own...
+        assert score.pred is not None
+        if score.pred.rows is not None:
+            ordered = compare_results(
+                score.pred.rows,
+                score.gold.rows or (),
+                ordered=True,
+                float_digits=cmp_cfg.float_digits,
+                permute_columns=True,
+                search_budget=cmp_cfg.permutation_search_budget,
+            )
+            assert score.correct == (ordered is MatchOutcome.MATCH)
+        # ...and flipping the diagnostic changes neither the reward nor the error label.
+        flipped = dataclasses.replace(
+            score, ordered_mismatch_multiset_match=not score.ordered_mismatch_multiset_match
+        )
+        assert tiered_reward(flipped, reward_cfg) == tiered_reward(score, reward_cfg)
+        assert error_type(flipped) == error_type(score)
+        assert flipped.correct == score.correct
+
+
+def test_diagnostic_never_changes_metrics(
+    db_path: Path, tmp_path: Path, cmp_cfg: ComparisonConfig
+) -> None:
+    cfg = build_dataclass(
+        EvalConfig,
+        {
+            "run_name": "r",
+            "seed": 0,
+            "output_dir": str(tmp_path),
+            "data": {"spider_dir": str(tmp_path)},
+            "model": {"name_or_path": "fake"},
+            "generation": {"batch_size": 1, "max_new_tokens": 8, "repetition_penalty": 1.0},
+            "prompt": {"sample_rows": 0, "max_value_chars": 10, "warn_prompt_tokens": 100},
+            "execution": {"timeout_s": 2.0, "max_rows": 1000},
+            "comparison": {"float_digits": 6},
+            "reward": {"parse_reward": 0.1, "execute_reward": 0.3, "match_reward": 1.0},
+        },
+    )
+    common = {"excluded": False, "difficulty": "easy", "truncated": False, "prompt_tokens": 1}
+    sqls = ["SELECT name FROM singer ORDER BY age", "SELECT name FROM singer ORDER BY age, name"]
+    records = [{**common, **score_fields(block(sql), TIED_GOLD, db_path, cfg)} for sql in sqls]
+    flipped = [{**r, "ordered_mismatch_multiset_match": False} for r in records]
+    metrics, baseline = summarize(records, 100), summarize(flipped, 100)
+    assert metrics["n_order_only_mismatch"] == 1 and baseline["n_order_only_mismatch"] == 0
+    for key in ("n_correct", "n_correct_strict", "execution_accuracy", "execution_accuracy_strict",
+                "by_difficulty", "error_types", "mean_reward"):
+        assert metrics[key] == baseline[key], key

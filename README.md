@@ -168,7 +168,8 @@ execution accuracy, overall and per difficulty.
 Each record contains: `example_id, db_id, difficulty, question, gold_sql, prompt, prompt_tokens,
 output, output_tokens, truncated, extracted_sql, extraction_status, parses, exec_error_type,
 exec_error_message, pred_row_count, gold_row_count, gold_ordered, correct, correct_strict,
-permutation_limit_hit, error_type, reward, excluded, exclusion_reason`.
+permutation_limit_hit, ordered_mismatch_multiset_match, error_type, reward, excluded,
+exclusion_reason`.
 
 `error_type` names the first stage that failed: an extraction status (`no_block`,
 `empty_block`), an execution error (`syntax`, `schema`, `timeout`, `not_allowed`,
@@ -222,7 +223,8 @@ coincidence. Invalid UTF-8 text in a database is decoded with replacement charac
 | Numbers | `1 == 1.0`. Floats are rounded to `float_digits` (default 6) decimals, so `0.1 + 0.2` matches `0.3`. Limitation: two values 1e-6 apart on either side of a rounding boundary (e.g. 2.5000006 vs 2.4999996) do not match. |
 | Text | Exact and case-sensitive. The text `'1'` does not equal the integer `1`. |
 | Empty gold result | Two empty results match whatever their columns, so any wrong query that returns nothing also "matches". Metrics report accuracy separately for empty and non-empty gold results. |
-| Ties under `ORDER BY` | Compared as ordered lists, so a correct query that breaks ties differently is marked wrong. This is a known limitation, also present in test-suite-sql-eval. |
+| Ties under `ORDER BY` (known limitation) | Ordered comparison is kept as is, for comparability with standard Spider evaluation: SQLite's tie order in the gold result is treated as part of the answer. A correct query that breaks ties differently is therefore marked wrong. On dev, `dev_00455` and `dev_00456` (`ORDER BY birth_date` over all 20,662 `wta_1` players) are the clearest cases: 15,834 rows tie on `birth_date`. test-suite-sql-eval has the same limitation. |
+| Order-only mismatch (diagnostic) | When the gold query has a top-level `ORDER BY` and the ordered comparison fails, the rows are also compared as an unordered multiset (with the default column handling). If they match, the record gets `ordered_mismatch_multiset_match: true` and `metrics.json` counts it in `n_order_only_mismatch`, which the script summary also shows. It covers both a wrong or missing sort and a correct sort with a different tie order, so these cases can be inspected. It is purely diagnostic: the example stays wrong (`error_type: wrong_result`), and correctness, the reward and every accuracy number are unchanged. |
 | Results over `execution.max_rows` | A prediction over the limit has its rows discarded, never truncated (a truncated result could match gold by accident). It is labelled `too_many_rows`, counts as not correct, earns at most `parse_reward`, and is counted in `n_pred_too_many_rows`. A result of exactly `max_rows` rows is scored normally. A gold query over the limit would be excluded, so `check_data.py` reports `n_gold_too_many_rows` and `max_gold_rows` and exits non-zero unless the count is 0. |
 | Failing gold queries | Excluded from scoring and listed with their error. Metrics report accuracy over scored examples and also counting excluded examples as wrong. |
 

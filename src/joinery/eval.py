@@ -57,6 +57,7 @@ _SCORE_KEYS = (
     "correct",
     "correct_strict",
     "permutation_limit_hit",
+    "ordered_mismatch_multiset_match",
     "error_type",
     "reward",
 )
@@ -103,6 +104,7 @@ def score_fields(output: str, gold_sql: str, db_path: Path, config: EvalConfig) 
         "correct": score.correct,
         "correct_strict": score.correct_strict,
         "permutation_limit_hit": score.permutation_limit_hit,
+        "ordered_mismatch_multiset_match": score.ordered_mismatch_multiset_match,
         "error_type": error_type(score),
         "reward": tiered_reward(score, config.reward),
     }
