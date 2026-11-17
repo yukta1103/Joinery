@@ -1,0 +1,17 @@
+{
+  "n_examples": 1034,
+  "n_databases": 20,
+  "by_difficulty": {
+    "easy": 248,
+    "medium": 446,
+    "hard": 174,
+    "extra": 166
+  },
+  "n_gold_failed": 0,
+  "n_gold_too_many_rows": 0,
+  "max_rows_limit": 100000,
+  "max_gold_rows": 20662,
+  "n_gold_empty": 49,
+  "n_gold_ordered": 231,
+  "gold_failures": []
+}
