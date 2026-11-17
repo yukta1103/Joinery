@@ -1,7 +1,7 @@
 """Loading Spider examples and locating their SQLite databases.
 
-Spider has to be downloaded by hand (see the README's "Data setup" section). The extracted folder
-must contain ``dev.json``, ``train_spider.json``, ``train_others.json`` and
+Spider is fetched by ``scripts/download_spider.py`` (or by hand, see the README's "Data setup"
+section). The extracted folder must contain ``dev.json``, ``train_spider.json``, ``train_others.json`` and
 ``database/<db_id>/<db_id>.sqlite``.
 """
 
@@ -25,7 +25,7 @@ SPLIT_FILES: dict[str, tuple[str, ...]] = {
 }
 
 _SETUP_HINT = (
-    "Download Spider as described in the README ('Data setup') and point data.spider_dir "
+    "Run scripts/download_spider.py (or see the README, 'Data setup') and point data.spider_dir "
     "(and data.database_dir, if the databases live elsewhere) at the extracted folder."
 )
 

@@ -7,8 +7,10 @@ __pycache__/
 build/
 dist/
 
-# Data (Spider is downloaded manually, see README)
+# Data (fetched by scripts/download_spider.py; never committed)
 data/
+*.zip
+*.zip.part
 
 # Run outputs: keep configs and metrics, ignore bulky predictions
 results/**/predictions*.jsonl

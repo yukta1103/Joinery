@@ -22,7 +22,7 @@ model = [
     "bitsandbytes>=0.43",
 ]
 tracking = ["wandb>=0.17"]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "gdown>=5.1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

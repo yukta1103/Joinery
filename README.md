@@ -47,7 +47,7 @@ src/joinery/
   eval.py            resumable evaluation runner
   generation.py      generator interface used by the runner
   hf_generator.py    Hugging Face batched greedy generation
-scripts/             check_data.py, run_eval.py, score_predictions.py
+scripts/             download_spider.py, check_data.py, run_eval.py, score_predictions.py
 configs/             one YAML per run
 notebooks/           thin Kaggle wrappers
 tests/               pytest suite
@@ -66,30 +66,60 @@ python -m pytest
 
 ## Data setup
 
-Spider's SQLite databases are only distributed as a zip on Google Drive, which can't be downloaded
-reliably from code, so this step is manual.
+### Download (recommended)
 
-1. Open the Spider page, https://yale-lily.github.io/spider, and download the dataset zip
-   (`spider_data.zip`) from its Google Drive link.
-2. Extract it so that you have:
-   ```
-   data/spider_data/
-     dev.json
-     train_spider.json
-     train_others.json
-     tables.json
-     database/<db_id>/<db_id>.sqlite
-   ```
-   `data/` is gitignored. If your folder sits elsewhere, set `data.spider_dir` (and
-   `data.database_dir` if the databases are elsewhere still) in the config or with `--set`.
-3. Check the setup and audit every gold query:
-   ```bash
-   python scripts/check_data.py --config configs/eval_qwen15b_instruct.yaml
-   ```
-   This prints the number of examples per difficulty, any gold queries that fail, how many
-   return no rows or depend on row order, and the largest gold result (`max_gold_rows`). It saves
-   the report to `results/data_check_dev.json` and exits non-zero if any gold query exceeds
-   `execution.max_rows`.
+```bash
+pip install -e ".[dev]"            # includes gdown
+python scripts/download_spider.py  # add --keep-zip to keep spider_data.zip
+```
+
+The script fetches the official `spider_data.zip` from Google Drive (file id
+`1403EGqzIDoHMdQF4c9Bkyl7dZLZ5Wt6J`) and checks its SHA256 against
+`00636695dabed6b5f4b8328a16b13e069a2f16591d5efcce57660669c85b121b`. It then extracts it, with
+path checks, to:
+
+```
+data/spider_data/
+  dev.json  train_spider.json  train_others.json  tables.json  ...
+  database/<db_id>/<db_id>.sqlite
+```
+
+- **Rerunning is safe.** A verified extract is detected and skipped. A kept zip with the right hash
+  is reused without downloading again.
+- **On a hash mismatch nothing is deleted.** The script prints the actual hash and stops.
+- **If Google Drive refuses** (quota exceeded or a confirmation page), the script stops with a
+  pointer to the manual steps below. It never retries.
+
+`data/` and `*.zip` are gitignored. The extracted dataset is about 1.8 GB and is never committed.
+
+### Manual download
+
+1. Open https://yale-lily.github.io/spider and download `spider_data.zip` from its Google Drive
+   link.
+2. Optionally check its SHA256 (the value above), for example with `sha256sum spider_data.zip` or
+   `certutil -hashfile spider_data.zip SHA256` on Windows.
+3. Extract it so you get the `data/spider_data/` layout shown above. You can also put the zip at
+   `data/spider_data.zip` and run `python scripts/download_spider.py`, which verifies and extracts
+   it without downloading.
+
+If your copy sits elsewhere, set `data.spider_dir` (and `data.database_dir` if the databases live
+somewhere else again) in the config or with `--set`.
+
+### Check the data
+
+```bash
+python scripts/check_data.py --config configs/eval_qwen15b_instruct.yaml
+```
+
+This prints the number of examples per difficulty, any gold queries that fail, how many return no
+rows or depend on row order, and the largest gold result (`max_gold_rows`). It saves the report to
+`results/data_check_dev.json` and exits non-zero if any gold query exceeds `execution.max_rows`.
+
+For the dev split this check passes with 1,034 examples over 20 databases: 248 easy, 446 medium,
+174 hard, 166 extra. 0 gold queries fail, 49 return no rows, 231 have a top-level `ORDER BY`, and
+`max_gold_rows` is 20,662. The largest is `dev_00455`/`dev_00456`, `ORDER BY birth_date` over all
+`wta_1` players, where 15,834 of the 20,662 rows tie on `birth_date`; see "Ties under `ORDER BY`"
+below.
 
 **Kaggle:** upload `spider_data.zip` once as a private Kaggle dataset (Kaggle extracts it) and
 attach it to the notebook. Its path looks like `/kaggle/input/<dataset-slug>/spider_data`.
